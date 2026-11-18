@@ -23,6 +23,15 @@ if (!file_exists($localConfig)) {
         . "        'timezone' => 'UTC',\n"
         . "        'base_url' => 'http://localhost:8080',\n"
         . "    ],\n"
+        . "    'google' => [\n"
+        . "        'client_id' => '',\n"
+        . "        'client_secret' => '',\n"
+        . "        'redirect_uri' => 'http://localhost:8080/auth/google/callback.php',\n"
+        . "    ],\n"
+        . "    'access' => [\n"
+        . "        'allowed_domains' => [],\n"
+        . "        'allowed_test_emails' => [],\n"
+        . "    ],\n"
         . "];\n";
 
     if (file_put_contents($localConfig, $contents, LOCK_EX) === false) {

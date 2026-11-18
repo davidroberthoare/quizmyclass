@@ -11,14 +11,14 @@ with WAL, Framework7, Dom7, and no build or packaging step.
 ## Local foundation
 
 Requirements are PHP 8.2 or newer with the `pdo_sqlite` and `sqlite3`
-extensions, plus Apache with `mod_rewrite` and `mod_headers` for the supplied
-`.htaccess` rules.
+extensions. Google sign-in also requires `curl` and `openssl`. Apache needs
+`mod_rewrite` and `mod_headers` for the supplied `.htaccess` rules.
 
 Install the development environment:
 
 ```bash
 php scripts/install.php
-php -S 127.0.0.1:8080 -t public
+php -S 127.0.0.1:8080 -t public public/router.php
 ```
 
 The installer creates the ignored `config/local.php`, generates a random
@@ -34,6 +34,39 @@ php scripts/backup.php
 php -d zend.assertions=1 -d assert.exception=1 tests/run.php
 curl http://127.0.0.1:8080/health.php
 ```
+
+Google sign-in requests only the `openid email profile` scopes. Add the web
+application client ID, client secret, and exact callback URL to
+`config/local.php`; that file remains git-ignored. Configure `redirect_uri` to
+point to `/auth/google/callback.php` at the same origin as `base_url`.
+
+For local testing:
+
+1. In Google Cloud Console, select or create a project and configure the
+   OAuth consent screen. Select Internal if everyone uses the same Google
+   Workspace; otherwise select External and add approved test users.
+2. Create an OAuth 2.0 Client ID with application type **Web application**.
+3. Add `http://127.0.0.1:8080` as an authorized JavaScript origin. This app
+   does not use Google JavaScript libraries, but the origin is still useful
+   when reviewing the web client configuration.
+4. Add
+   `http://127.0.0.1:8080/auth/google/callback.php` as an authorized redirect
+   URI. If you use `localhost` in the browser, register and configure the
+   matching `localhost` callback instead; the values must match exactly.
+5. Copy the generated client ID and client secret into the `google` section
+   of git-ignored `config/local.php`. Do not paste the secret into an issue,
+   commit, or chat.
+6. Add at least your exact email to `access.allowed_test_emails`, or a Google
+   Workspace domain to `access.allowed_domains`, then run
+   `php scripts/migrate.php`.
+7. Start the app with
+   `php -S 127.0.0.1:8080 -t public public/router.php` and choose **Sign in
+   with Google**.
+
+Access is denied unless the verified Google email matches either
+`access.allowed_domains` or `access.allowed_test_emails`. Production
+deployments should use the Google Workspace domain allowlist; exact test
+addresses are intended for development.
 
 The checked-in Framework7 bundle is pinned to version 8.3.4. The application
 uses its bundled Dom7 utilities and requires no JavaScript package manager.

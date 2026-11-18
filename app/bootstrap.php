@@ -10,6 +10,12 @@ require_once __DIR__ . '/Support/Database.php';
 require_once __DIR__ . '/Support/Backup.php';
 require_once __DIR__ . '/Support/Migrator.php';
 require_once __DIR__ . '/Support/Http.php';
+require_once __DIR__ . '/Support/Csrf.php';
+require_once __DIR__ . '/Support/UserRepository.php';
+require_once __DIR__ . '/Support/RoomRepository.php';
+require_once __DIR__ . '/Auth/Session.php';
+require_once __DIR__ . '/Auth/AccessPolicy.php';
+require_once __DIR__ . '/Auth/GoogleClient.php';
 
 $root = dirname(__DIR__);
 $config = Config::load($root);

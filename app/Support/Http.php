@@ -30,5 +30,34 @@ final class Http
         );
         exit;
     }
+
+    public static function redirect(string $path, int $status = 303): never
+    {
+        if (!str_starts_with($path, '/') || str_starts_with($path, '//')) {
+            throw new \InvalidArgumentException('Redirect destination must be a local path.');
+        }
+        http_response_code($status);
+        header('Location: ' . $path);
+        exit;
+    }
+
+    public static function redirectToHttps(string $url, int $status = 303): never
+    {
+        if (strtolower((string) parse_url($url, PHP_URL_SCHEME)) !== 'https') {
+            throw new \InvalidArgumentException('External redirects must use HTTPS.');
+        }
+        http_response_code($status);
+        header('Location: ' . $url);
+        exit;
+    }
+
+    public static function requirePost(): void
+    {
+        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
+            http_response_code(405);
+            header('Allow: POST');
+            throw new \RuntimeException('This endpoint accepts POST requests only.');
+        }
+    }
 }
 

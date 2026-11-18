@@ -2,6 +2,7 @@ Options -Indexes
 DirectoryIndex index.php
 
 RewriteEngine On
+RewriteRule ^q/([a-z0-9-]+)$ q.php?slug=$1 [L,QSA]
 RewriteRule ^health/?$ health.php [L]
 
 <FilesMatch "(^\.|composer\.(json|lock)|package(-lock)?\.json)$">

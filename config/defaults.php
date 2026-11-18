@@ -17,6 +17,15 @@ return [
         'path' => $root . '/data/quizmyclass.sqlite3',
         'busy_timeout_ms' => 5000,
     ],
+    'google' => [
+        'client_id' => '',
+        'client_secret' => '',
+        'redirect_uri' => '',
+    ],
+    'access' => [
+        'allowed_domains' => [],
+        'allowed_test_emails' => [],
+    ],
     'paths' => [
         'migrations' => $root . '/app/Migrations',
         'backups' => $root . '/data/backups',

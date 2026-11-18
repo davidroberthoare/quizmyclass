@@ -13,6 +13,15 @@ return [
     'database' => [
         'path' => dirname(__DIR__) . '/data/quizmyclass.sqlite3',
     ],
+    'google' => [
+        'client_id' => '',
+        'client_secret' => '',
+        'redirect_uri' => 'https://quizmyclass.example.test/auth/google/callback.php',
+    ],
+    'access' => [
+        'allowed_domains' => ['school.example'],
+        'allowed_test_emails' => ['approved.personal@gmail.com'],
+    ],
     'paths' => [
         'backups' => dirname(__DIR__) . '/data/backups',
     ],
