@@ -134,17 +134,68 @@ final class RoomRepository
             return $role;
         }
 
-        $insert = $this->database->prepare(
-            'INSERT INTO room_memberships (room_id, user_id, role, created_at) ' .
-            'VALUES (:room_id, :user_id, :role, :created_at)'
-        );
-        $insert->execute([
-            'room_id' => $roomId,
-            'user_id' => $userId,
-            'role' => 'student',
-            'created_at' => gmdate('Y-m-d\TH:i:s\Z'),
-        ]);
         return 'student';
+    }
+
+    public function updateCollaborationLimits(int $roomId, int $actorId, int $maxQuestions, int $studentCap): void
+    {
+        $room = $this->findById($roomId);
+        if ($room === null) {
+            throw new RuntimeException('Room not found.');
+        }
+        if ((int) $room['owner_id'] !== $actorId) {
+            throw new RuntimeException('Only the room owner may update room limits.');
+        }
+        if ($room['state'] !== 'editing') {
+            throw new RuntimeException('Room limits cannot change after activation.');
+        }
+        if ($maxQuestions < 1 || $maxQuestions > 500
+            || $studentCap < 1 || $studentCap > 100
+        ) {
+            throw new RuntimeException('Question limits are outside the allowed range.');
+        }
+
+        $statement = $this->database->prepare(
+            'SELECT COUNT(*) FROM questions WHERE room_id = :room_id'
+        );
+        $statement->execute(['room_id' => $roomId]);
+        if ((int) $statement->fetchColumn() > $maxQuestions) {
+            throw new RuntimeException('The room already has more questions than that limit.');
+        }
+
+        $this->database->beginTransaction();
+        try {
+            $update = $this->database->prepare(
+                'UPDATE rooms SET max_questions = :max_questions, student_question_cap = :student_cap, ' .
+                'updated_at = :updated_at WHERE id = :id'
+            );
+            $update->execute([
+                'max_questions' => $maxQuestions,
+                'student_cap' => $studentCap,
+                'updated_at' => gmdate('Y-m-d\TH:i:s\Z'),
+                'id' => $roomId,
+            ]);
+            $audit = $this->database->prepare(
+                'INSERT INTO audit_events (actor_user_id, room_id, action, created_at, details_json) ' .
+                'VALUES (:actor_user_id, :room_id, :action, :created_at, :details_json)'
+            );
+            $audit->execute([
+                'actor_user_id' => $actorId,
+                'room_id' => $roomId,
+                'action' => 'room.limits_updated',
+                'created_at' => gmdate('Y-m-d\TH:i:s\Z'),
+                'details_json' => json_encode(
+                    ['max_questions' => $maxQuestions, 'student_question_cap' => $studentCap],
+                    JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR,
+                ),
+            ]);
+            $this->database->commit();
+        } catch (\Throwable $exception) {
+            if ($this->database->inTransaction()) {
+                $this->database->rollBack();
+            }
+            throw $exception;
+        }
     }
 }
 

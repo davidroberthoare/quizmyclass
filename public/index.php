@@ -9,6 +9,15 @@ use QuizMyClass\Support\Http;
 use QuizMyClass\Support\RoomRepository;
 use QuizMyClass\Support\UserRepository;
 
+$requestPath = parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH);
+if (is_string($requestPath)
+    && preg_match('#^/q/([a-z0-9-]+)$#', $requestPath, $matches) === 1
+) {
+    $_GET['slug'] = $matches[1];
+    require __DIR__ . '/q.php';
+    return;
+}
+
 $runtime = require dirname(__DIR__) . '/app/bootstrap.php';
 Session::start($runtime['config']);
 Http::securityHeaders();

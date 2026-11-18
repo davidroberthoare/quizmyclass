@@ -71,6 +71,23 @@ addresses are intended for development.
 The checked-in Framework7 bundle is pinned to version 8.3.4. The application
 uses its bundled Dom7 utilities and requires no JavaScript package manager.
 
+## Collaborative question editing
+
+In an editable room, signed-in students can add and edit only their own
+questions. The room owner can edit any question, approve or reject it, hide it,
+and change its order. Correct answers and explanations are shown only to the
+question author and room owner.
+
+The editor supports multiple choice, multiple select, true/false, short text
+with multiple accepted answers, and numeric questions with tolerance. Prompt
+and explanation HTML is restricted to an explicit allowlist; linked images and
+links must use HTTPS. Room and per-student question caps are configurable by
+the room owner.
+
+Question changes are audited and remain editable only while the room is in
+`editing` state. Database migration `003_questions.sql` is repeatable through
+`php scripts/migrate.php`.
+
 ## Core workflow
 
 1. A Google-signed-in teacher creates a room and chooses a URL-safe slug.
@@ -304,6 +321,7 @@ not require Node, npm, a frontend compiler, or a PHP package manager.
 
 The deployable foundation is implemented: environment configuration, SQLite
 WAL and foreign-key enforcement, repeatable migrations, consistent backups,
-local health checks, and an accessible mobile shell are in place. Identity,
-rooms, question collaboration, activation, attempts, and results remain to be
-implemented.
+local health checks, and an accessible mobile shell are in place. Google
+sign-in, allowlisted identity, room creation, role-aware routing, and complete
+question collaboration are implemented. Activation, immutable revisions,
+attempts, and results remain to be implemented.

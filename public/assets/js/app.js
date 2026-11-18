@@ -6,6 +6,7 @@
         name: 'QuizMyClass',
         theme: 'auto',
     });
+    window.quizMyClassApp = app;
 
     if (!app) {
         throw new Error('Framework7 failed to initialize.');

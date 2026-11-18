@@ -13,6 +13,8 @@ require_once __DIR__ . '/Support/Http.php';
 require_once __DIR__ . '/Support/Csrf.php';
 require_once __DIR__ . '/Support/UserRepository.php';
 require_once __DIR__ . '/Support/RoomRepository.php';
+require_once __DIR__ . '/Support/RichTextSanitizer.php';
+require_once __DIR__ . '/Support/QuestionRepository.php';
 require_once __DIR__ . '/Auth/Session.php';
 require_once __DIR__ . '/Auth/AccessPolicy.php';
 require_once __DIR__ . '/Auth/GoogleClient.php';
