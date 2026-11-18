@@ -92,6 +92,30 @@ header('Cache-Control: no-store');
                 </section>
 
                 <?php if ($user !== null): ?>
+                    
+                    <section class="block-title">Your rooms</section>
+                    <div class="block">
+                        <?php if ($ownedRooms === []): ?>
+                            <div class="card">
+                                <div class="card-content card-content-padding">
+                                    You have not created a room yet.
+                                </div>
+                            </div>
+                        <?php else: ?>
+                            <div class="list links-list">
+                                <ul>
+                                    <?php foreach ($ownedRooms as $room): ?>
+                                        <li>
+                                            <a class="external" href="/q/<?= $escape($room['slug']) ?>">
+                                                <?= $escape($room['name']) ?>
+                                            </a>
+                                        </li>
+                                    <?php endforeach; ?>
+                                </ul>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                    
                     <section class="block-title">Create a room</section>
                     <div class="block">
                         <form action="/rooms/create.php" method="post">
@@ -136,28 +160,7 @@ header('Cache-Control: no-store');
                         </form>
                     </div>
 
-                    <section class="block-title">Your rooms</section>
-                    <div class="block">
-                        <?php if ($ownedRooms === []): ?>
-                            <div class="card">
-                                <div class="card-content card-content-padding">
-                                    You have not created a room yet.
-                                </div>
-                            </div>
-                        <?php else: ?>
-                            <div class="list links-list">
-                                <ul>
-                                    <?php foreach ($ownedRooms as $room): ?>
-                                        <li>
-                                            <a class="external" href="/q/<?= $escape($room['slug']) ?>">
-                                                <?= $escape($room['name']) ?>
-                                            </a>
-                                        </li>
-                                    <?php endforeach; ?>
-                                </ul>
-                            </div>
-                        <?php endif; ?>
-                    </div>
+                    
                 <?php endif; ?>
             </main>
         </div>
