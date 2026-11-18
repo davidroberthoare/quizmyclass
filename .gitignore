@@ -1,0 +1,7 @@
+/config/local.php
+/data/*.sqlite
+/data/*.sqlite-shm
+/data/*.sqlite-wal
+/data/backups/
+!/data/.gitkeep
+

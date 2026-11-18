@@ -1,0 +1,2 @@
+Framework7 8.3.4
+MIT License

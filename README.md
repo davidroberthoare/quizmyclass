@@ -8,6 +8,36 @@ revision, and views the resulting attempts.
 The first release is intentionally small and deployable: plain PHP, SQLite
 with WAL, Framework7, Dom7, and no build or packaging step.
 
+## Local foundation
+
+Requirements are PHP 8.2 or newer with the `pdo_sqlite` and `sqlite3`
+extensions, plus Apache with `mod_rewrite` and `mod_headers` for the supplied
+`.htaccess` rules.
+
+Install the development environment:
+
+```bash
+php scripts/install.php
+php -S 127.0.0.1:8080 -t public
+```
+
+The installer creates the ignored `config/local.php`, generates a random
+session secret, creates the writable SQLite database, and applies migrations.
+Keep `config/local.php` and `data/` outside the public document root. The
+included `public/` directory is the only web-exposed directory.
+
+Operational commands:
+
+```bash
+php scripts/migrate.php
+php scripts/backup.php
+php -d zend.assertions=1 -d assert.exception=1 tests/run.php
+curl http://127.0.0.1:8080/health.php
+```
+
+The checked-in Framework7 bundle is pinned to version 8.3.4. The application
+uses its bundled Dom7 utilities and requires no JavaScript package manager.
+
 ## Core workflow
 
 1. A Google-signed-in teacher creates a room and chooses a URL-safe slug.
@@ -239,7 +269,8 @@ not require Node, npm, a frontend compiler, or a PHP package manager.
 
 ## Project status
 
-Specification is in progress. No runtime implementation has been started.
-The initial product decisions are documented above so that engineering work
-can proceed once the requirements interview and acceptance criteria are
-complete.
+The deployable foundation is implemented: environment configuration, SQLite
+WAL and foreign-key enforcement, repeatable migrations, consistent backups,
+local health checks, and an accessible mobile shell are in place. Identity,
+rooms, question collaboration, activation, attempts, and results remain to be
+implemented.
