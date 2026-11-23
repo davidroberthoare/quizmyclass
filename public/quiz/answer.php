@@ -20,5 +20,5 @@ try {
     );
     Http::json(['status' => $attempt['status'] === 'in_progress' ? 'saved' : 'finished']);
 } catch (Throwable $exception) {
-    Http::json(['status' => 'error', 'message' => $exception->getMessage()], 400);
+    Http::json(['status' => 'error', 'message' => Http::safeMessage($exception)], 400);
 }

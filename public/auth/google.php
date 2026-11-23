@@ -18,7 +18,7 @@ try {
     Session::set('oauth_verifier', $verifier);
     Http::redirectToHttps($google->authorizeUrl($state, $verifier));
 } catch (Throwable $exception) {
-    Session::set('flash_error', $exception->getMessage());
+    Session::set('flash_error', Http::safeMessage($exception));
     Http::redirect('/');
 }
 

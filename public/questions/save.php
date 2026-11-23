@@ -88,7 +88,7 @@ try {
         Session::set('flash_success', 'Question saved and returned to draft.');
     }
 } catch (Throwable $exception) {
-    Session::set('flash_error', $exception->getMessage());
+    Session::set('flash_error', Http::safeMessage($exception));
     if ($room !== null && Session::get('user_id') !== null) {
         // Keep what the user typed so a validation error or expired form does not lose their work.
         $keep = ['type', 'prompt_html', 'explanation_html', 'points', 'choice_text', 'choice_correct',

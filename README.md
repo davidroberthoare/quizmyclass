@@ -30,8 +30,10 @@ Operational commands:
 
 ```bash
 php scripts/migrate.php
-php scripts/backup.php
+php scripts/backup.php --keep=14
+php scripts/check-deployment.php
 php -d zend.assertions=1 -d assert.exception=1 tests/run.php
+php tests/http.php
 curl http://127.0.0.1:8080/health.php
 ```
 
@@ -112,7 +114,7 @@ Question changes are audited and remain editable only while the room is in
 | Taking a quiz: attempts, timer, resume, shuffling, grading, feedback | Done |
 | Teacher results: students, attempts, item analysis, CSV, print, reset | Done |
 | Super-admin console (`.htaccess`-protected) | Done |
-| Deployment guide and final hardening pass | Not started |
+| Deployment guide and hardening pass | Done (see `docs/DEPLOYMENT.md`) |
 
 User-facing text says "quiz"; the database and code still use `rooms` internally.
 

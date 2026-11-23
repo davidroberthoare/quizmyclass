@@ -49,5 +49,25 @@ final class Backup
 
         return $path;
     }
-}
 
+    /**
+     * Delete the oldest automatic backups, keeping the newest $keep.
+     *
+     * @return list<string> removed file names
+     */
+    public function prune(int $keep): array
+    {
+        if ($keep < 1) {
+            throw new RuntimeException('Keep at least one backup.');
+        }
+        $files = glob($this->backupDirectory . '/quizmyclass-*.sqlite3') ?: [];
+        rsort($files, SORT_STRING); // names embed a UTC timestamp, so name order is age order
+        $removed = [];
+        foreach (array_slice($files, $keep) as $file) {
+            if (is_file($file) && unlink($file)) {
+                $removed[] = basename($file);
+            }
+        }
+        return $removed;
+    }
+}

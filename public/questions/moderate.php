@@ -50,7 +50,7 @@ try {
         Session::set('flash_success', 'Question status updated.');
     }
 } catch (Throwable $exception) {
-    Session::set('flash_error', $exception->getMessage());
+    Session::set('flash_error', Http::safeMessage($exception));
 }
 
 Http::redirect($redirect);

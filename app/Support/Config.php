@@ -119,6 +119,9 @@ final class Config
         }
 
         if ($environment === 'production') {
+            if (!empty($config['app']['debug'])) {
+                throw new RuntimeException('Debug mode must be off in production.');
+            }
             $baseUrl = (string) ($config['app']['base_url'] ?? '');
             $redirectUri = (string) ($config['google']['redirect_uri'] ?? '');
             $clientId = (string) ($config['google']['client_id'] ?? '');

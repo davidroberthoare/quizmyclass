@@ -38,7 +38,7 @@ try {
         throw new RuntimeException('Question does not belong to this quiz.');
     }
 } catch (Throwable $exception) {
-    Session::set('flash_error', $exception->getMessage());
+    Session::set('flash_error', Http::safeMessage($exception));
     Http::redirect(isset($room) && $room !== null ? '/q/' . rawurlencode((string) $room['slug']) : '/');
 }
 

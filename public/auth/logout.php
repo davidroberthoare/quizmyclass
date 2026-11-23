@@ -22,7 +22,7 @@ try {
     Session::start($runtime['config']);
     Session::set('flash_success', 'You are signed out.');
 } catch (Throwable $exception) {
-    Session::set('flash_error', $exception->getMessage());
+    Session::set('flash_error', Http::safeMessage($exception));
 }
 
 Http::redirect('/');

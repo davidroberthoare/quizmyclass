@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use QuizMyClass\Support\Backup;
+use QuizMyClass\Support\Http;
 use QuizMyClass\Support\Config;
 use QuizMyClass\Support\Database;
 use QuizMyClass\Support\Migrator;
@@ -23,6 +24,7 @@ require_once dirname(__DIR__) . '/app/Support/Config.php';
 require_once dirname(__DIR__) . '/app/Support/Database.php';
 require_once dirname(__DIR__) . '/app/Support/Migrator.php';
 require_once dirname(__DIR__) . '/app/Support/Backup.php';
+require_once dirname(__DIR__) . '/app/Support/Http.php';
 require_once dirname(__DIR__) . '/app/Support/UserRepository.php';
 require_once dirname(__DIR__) . '/app/Support/RoomRepository.php';
 require_once dirname(__DIR__) . '/app/Support/RichTextSanitizer.php';
@@ -563,6 +565,50 @@ $tests['admin can search, deactivate, block users, and delete with confirmation 
     assert($left === 0, 'attempts cascade with the quiz');
     $audit = (int) $database->query("SELECT COUNT(*) FROM audit_events WHERE action = 'admin.room_deleted' AND room_id IS NULL")->fetchColumn();
     assert($audit === 1, 'deletion is audited without a room reference');
+};
+
+$tests['backups prune oldest files; errors never leak internals; production config is strict'] = static function () use ($config, $temporary): void {
+    $directory = $temporary . '/prune-backups';
+    mkdir($directory, 0700, true);
+    foreach (['20260101-000000', '20260102-000000', '20260103-000000'] as $stamp) {
+        touch($directory . "/quizmyclass-$stamp.sqlite3");
+    }
+    touch($directory . '/manual-note.sqlite3'); // not an automatic backup: must survive
+    $backup = new Backup(Database::connect($config), $directory);
+    $removed = $backup->prune(2);
+    assert($removed === ['quizmyclass-20260101-000000.sqlite3']);
+    assert(is_file($directory . '/manual-note.sqlite3'));
+    array_map('unlink', glob($directory . '/*') ?: []);
+    rmdir($directory);
+
+    // User-facing messages pass through; database and unexpected errors are replaced.
+    $logged = ini_set('error_log', '/dev/null');
+    assert(Http::safeMessage(new RuntimeException('Pick a different link.')) === 'Pick a different link.');
+    $leak = Http::safeMessage(new PDOException('SQLSTATE[HY000]: no such table: secret_table'));
+    assert(!str_contains($leak, 'SQLSTATE') && !str_contains($leak, 'secret_table'));
+    assert(!str_contains(Http::safeMessage(new TypeError('boom /var/www/app.php')), '/var/www'));
+    ini_set('error_log', (string) $logged);
+
+    // Production must not run with debug on or an HTTP origin.
+    $production = ['app' => ['environment' => 'production', 'debug' => true]];
+    putenv('QUIZMYCLASS_ENVIRONMENT=production');
+    putenv('QUIZMYCLASS_DEBUG=1');
+    putenv('QUIZMYCLASS_SESSION_SECRET=' . str_repeat('s', 40));
+    putenv('QUIZMYCLASS_BASE_URL=https://quiz.example.com');
+    putenv('QUIZMYCLASS_GOOGLE_REDIRECT_URI=https://quiz.example.com/auth/google/callback.php');
+    putenv('QUIZMYCLASS_GOOGLE_CLIENT_ID=id');
+    putenv('QUIZMYCLASS_GOOGLE_CLIENT_SECRET=secret');
+    putenv('QUIZMYCLASS_CONFIG_FILE=' . $temporary . '/none.php');
+    try {
+        Config::load(dirname(__DIR__));
+        assert(false, 'production with debug on must be rejected');
+    } catch (RuntimeException $exception) {
+        assert(str_contains($exception->getMessage(), 'Debug mode'));
+    } finally {
+        foreach (['ENVIRONMENT', 'DEBUG', 'SESSION_SECRET', 'BASE_URL', 'GOOGLE_REDIRECT_URI', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'CONFIG_FILE'] as $name) {
+            putenv('QUIZMYCLASS_' . $name);
+        }
+    }
 };
 
 $tests['collaboration protects ownership answers and moderation'] = static function () use ($config): void {

@@ -38,6 +38,11 @@ final class Database
             throw new RuntimeException('Database busy timeout must be between 0 and 60000 milliseconds.');
         }
 
+        // The database holds student names and emails: owner-only access.
+        if (is_file($path)) {
+            @chmod($path, 0600);
+        }
+
         $pdo->exec('PRAGMA foreign_keys = ON');
         $pdo->exec('PRAGMA busy_timeout = ' . $busyTimeout);
         $pdo->exec('PRAGMA journal_mode = WAL');

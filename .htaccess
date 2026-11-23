@@ -1,0 +1,7 @@
+# Fallback for hosts whose document root is the project folder instead of public/.
+# The right setup is to point the web root at public/ (see docs/DEPLOYMENT.md);
+# this only keeps code, configuration and data from being downloaded if that was missed.
+<FilesMatch "\.(php|sql|md|json|lock|sqlite3?|log)$">
+    Require all denied
+</FilesMatch>
+Options -Indexes

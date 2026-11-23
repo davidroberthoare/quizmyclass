@@ -28,6 +28,6 @@ try {
     );
     Session::set('flash_success', $deleted . ' attempt' . ($deleted === 1 ? '' : 's') . ' deleted.');
 } catch (Throwable $exception) {
-    Session::set('flash_error', $exception->getMessage());
+    Session::set('flash_error', Http::safeMessage($exception));
 }
 Http::redirect($redirect);

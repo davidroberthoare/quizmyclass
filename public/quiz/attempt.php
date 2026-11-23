@@ -25,7 +25,7 @@ try {
         throw new RuntimeException('Quiz not found.');
     }
 } catch (Throwable $exception) {
-    Session::set('flash_error', $exception->getMessage());
+    Session::set('flash_error', Http::safeMessage($exception));
     Http::redirect('/');
 }
 

@@ -26,6 +26,6 @@ try {
     $attempt = (new AttemptRepository($runtime['database']))->startOrResume($room, $revision, (int) $user['id']);
     $redirect = '/quiz/attempt.php?id=' . (int) $attempt['id'];
 } catch (Throwable $exception) {
-    Session::set('flash_error', $exception->getMessage());
+    Session::set('flash_error', Http::safeMessage($exception));
 }
 Http::redirect($redirect);

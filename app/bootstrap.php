@@ -33,6 +33,25 @@ $config = Config::load($root);
 
 date_default_timezone_set($config['app']['timezone']);
 ini_set('display_errors', $config['app']['debug'] ? '1' : '0');
+ini_set('log_errors', '1');
+
+// Last-resort handler: log the real error, show visitors a plain page (details only in debug mode).
+set_exception_handler(static function (\Throwable $exception) use ($config): void {
+    error_log(sprintf('QuizMyClass uncaught %s: %s at %s:%d', $exception::class, $exception->getMessage(), $exception->getFile(), $exception->getLine()));
+    if (PHP_SAPI === 'cli') {
+        fwrite(STDERR, $exception->getMessage() . "\n");
+        exit(1);
+    }
+    if (!headers_sent()) {
+        http_response_code(500);
+        header('Content-Type: text/plain; charset=utf-8');
+        header('Cache-Control: no-store');
+    }
+    echo !empty($config['app']['debug'])
+        ? $exception::class . ': ' . $exception->getMessage() . ' (' . $exception->getFile() . ':' . $exception->getLine() . ')'
+        : 'Something went wrong. Please try again in a moment.';
+    exit(1);
+});
 
 $database = Database::connect($config);
 

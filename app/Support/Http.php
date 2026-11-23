@@ -14,6 +14,32 @@ final class Http
         header('X-Content-Type-Options: nosniff');
         header('X-Frame-Options: DENY');
         header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
+        if (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') {
+            header('Strict-Transport-Security: max-age=15552000');
+        }
+    }
+
+    /**
+     * Text that is safe to show a visitor. Messages from our own RuntimeExceptions are written for
+     * users; anything else (database errors, bugs) is logged and replaced with a generic message so
+     * SQL, file paths and internals never reach the browser.
+     */
+    public static function safeMessage(\Throwable $exception): string
+    {
+        if ($exception instanceof \RuntimeException
+            && !$exception instanceof \PDOException
+            && !$exception instanceof \JsonException
+        ) {
+            return $exception->getMessage();
+        }
+        error_log(sprintf(
+            'QuizMyClass error: %s: %s at %s:%d',
+            $exception::class,
+            $exception->getMessage(),
+            $exception->getFile(),
+            $exception->getLine(),
+        ));
+        return 'Something went wrong. Please try again.';
     }
 
     /**

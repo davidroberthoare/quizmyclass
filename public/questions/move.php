@@ -55,10 +55,10 @@ try {
     if ($isAjax) {
         Http::json([
             'status' => 'error',
-            'message' => $exception->getMessage(),
+            'message' => Http::safeMessage($exception),
         ], 400);
     }
-    Session::set('flash_error', $exception->getMessage());
+    Session::set('flash_error', Http::safeMessage($exception));
 }
 
 Http::redirect($redirect);

@@ -18,6 +18,6 @@ try {
     $redirect = '/quiz/attempt.php?id=' . (int) $attempt['id'];
     Session::set('flash_success', $attempt['status'] === 'expired' ? 'Time ran out; your answers were submitted.' : 'Quiz submitted.');
 } catch (Throwable $exception) {
-    Session::set('flash_error', $exception->getMessage());
+    Session::set('flash_error', Http::safeMessage($exception));
 }
 Http::redirect($redirect);

@@ -29,6 +29,7 @@ return [
     'paths' => [
         'migrations' => $root . '/app/Migrations',
         'backups' => $root . '/data/backups',
+        'sessions' => $root . '/data/sessions',
     ],
 ];
 

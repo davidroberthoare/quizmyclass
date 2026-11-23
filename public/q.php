@@ -11,6 +11,7 @@ use QuizMyClass\Support\QuizRepository;
 use QuizMyClass\Support\QuizSettings;
 use QuizMyClass\Support\RoomRepository;
 use QuizMyClass\Support\UserRepository;
+use QuizMyClass\Support\Http;
 use QuizMyClass\Support\View;
 
 $runtime = require dirname(__DIR__) . '/app/bootstrap.php';
@@ -45,7 +46,7 @@ try {
     $room = null;
     $role = null;
     $roomQuestions = [];
-    Session::set('flash_error', $exception->getMessage());
+    Session::set('flash_error', Http::safeMessage($exception));
 }
 
 $e = View::e(...);

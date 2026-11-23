@@ -40,7 +40,7 @@ try {
     Session::set('flash_success', 'Signed in as ' . $user['display_name'] . '.');
     Http::redirect('/');
 } catch (Throwable $exception) {
-    Session::set('flash_error', $exception->getMessage());
+    Session::set('flash_error', Http::safeMessage($exception));
     Http::redirect('/');
 }
 
