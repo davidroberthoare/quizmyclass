@@ -3,44 +3,41 @@
 declare(strict_types=1);
 
 use QuizMyClass\Auth\Session;
-use QuizMyClass\Support\Csrf;
+use QuizMyClass\Support\Endpoint;
 use QuizMyClass\Support\Http;
+use QuizMyClass\Support\QuizRepository;
 use QuizMyClass\Support\RoomRepository;
-use QuizMyClass\Support\UserRepository;
 
 $runtime = require dirname(__DIR__, 2) . '/app/bootstrap.php';
-Session::start($runtime['config']);
-Http::securityHeaders();
-
-if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
-    http_response_code(405);
-    header('Allow: POST');
-    exit;
-}
 
 $redirect = '/';
 try {
-    Csrf::validate();
-    $user = Session::user(new UserRepository($runtime['database']));
-    if ($user === null) {
-        throw new RuntimeException('Sign in before changing room settings.');
-    }
+    $user = Endpoint::postUser($runtime);
     $rooms = new RoomRepository($runtime['database']);
     $room = $rooms->findBySlug((string) ($_POST['room_slug'] ?? ''));
     if ($room === null) {
-        throw new RuntimeException('Room not found.');
+        throw new RuntimeException('Quiz not found.');
     }
     $redirect = '/q/' . rawurlencode((string) $room['slug']);
+    $rooms->rename(
+        (int) $room['id'],
+        (int) $user['id'],
+        (string) ($_POST['name'] ?? ''),
+        (string) ($_POST['slug'] ?? ''),
+    );
+    // Any later step must send the user to the new link.
+    $redirect = '/q/' . rawurlencode(RoomRepository::normalizeSlug((string) ($_POST['slug'] ?? '')));
+    $quiz = new QuizRepository($runtime['database'], (string) $runtime['config']['app']['timezone']);
+    // Validate the delivery settings first so a bad value saves nothing.
+    $quiz->saveSettings((int) $room['id'], (int) $user['id'], $_POST);
     $rooms->updateCollaborationLimits(
         (int) $room['id'],
         (int) $user['id'],
         (int) ($_POST['max_questions'] ?? 0),
         (int) ($_POST['student_question_cap'] ?? 0),
     );
-    Session::set('flash_success', 'Room question limits saved.');
+    Session::set('flash_success', 'Quiz settings saved.');
 } catch (Throwable $exception) {
     Session::set('flash_error', $exception->getMessage());
 }
-
 Http::redirect($redirect);
-

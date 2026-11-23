@@ -22,7 +22,7 @@ try {
     Csrf::validate();
     $user = Session::user(new UserRepository($runtime['database']));
     if ($user === null) {
-        Session::set('flash_error', 'Sign in before creating a room.');
+        Session::set('flash_error', 'Sign in before creating a quiz.');
         Http::redirect('/');
     }
 
@@ -31,7 +31,7 @@ try {
         (string) ($_POST['name'] ?? ''),
         (string) ($_POST['slug'] ?? ''),
     );
-    Session::set('flash_success', 'Room created.');
+    Session::set('flash_success', 'Quiz created.');
     Http::redirect('/q/' . rawurlencode((string) $room['slug']));
 } catch (Throwable $exception) {
     Session::set('flash_error', $exception->getMessage());

@@ -45,5 +45,21 @@ final class Database
 
         return $pdo;
     }
-}
 
+    /**
+     * Run $work inside one short transaction; roll back and rethrow on any failure.
+     */
+    public static function transactional(PDO $pdo, callable $work): void
+    {
+        $pdo->beginTransaction();
+        try {
+            $work();
+            $pdo->commit();
+        } catch (\Throwable $exception) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $exception;
+        }
+    }
+}

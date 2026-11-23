@@ -102,6 +102,20 @@ Question changes are audited and remain editable only while the room is in
 6. The student sees permitted feedback; the teacher sees the best score,
    attempts, per-question details, and item analysis.
 
+## Status
+
+| Area | State |
+| --- | --- |
+| Sign-in, quizzes (rooms), roles | Done |
+| Collaborative question editing and moderation | Done |
+| Quiz settings, activation, immutable revisions, close/reopen | Done |
+| Taking a quiz: attempts, timer, resume, shuffling, grading, feedback | Done |
+| Teacher results: students, attempts, item analysis, CSV, print, reset | Done |
+| Super-admin console (`.htaccess`-protected) | Not started |
+| Backups UI, deployment guide, hardening pass | Not started |
+
+User-facing text says "quiz"; the database and code still use `rooms` internally.
+
 ## Version 1 scope
 
 ### Users and access

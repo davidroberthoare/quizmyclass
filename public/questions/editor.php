@@ -8,16 +8,11 @@ use QuizMyClass\Support\Http;
 use QuizMyClass\Support\QuestionRepository;
 use QuizMyClass\Support\RoomRepository;
 use QuizMyClass\Support\UserRepository;
+use QuizMyClass\Support\View;
 
 $runtime = require dirname(__DIR__, 2) . '/app/bootstrap.php';
 Session::start($runtime['config']);
 Http::securityHeaders();
-
-$escape = static fn (mixed $value): string => htmlspecialchars(
-    (string) $value,
-    ENT_QUOTES | ENT_SUBSTITUTE,
-    'UTF-8',
-);
 
 try {
     $user = Session::user(new UserRepository($runtime['database']));
@@ -28,11 +23,10 @@ try {
     $rooms = new RoomRepository($runtime['database']);
     $room = $rooms->findBySlug((string) ($_GET['room'] ?? ''));
     if ($room === null) {
-        throw new RuntimeException('Room not found.');
+        throw new RuntimeException('Quiz not found.');
     }
-    $role = $rooms->roleForUser((int) $room['id'], (int) $user['id']);
     if ($room['state'] !== 'editing') {
-        throw new RuntimeException('This room is no longer editable.');
+        throw new RuntimeException('This quiz is no longer editable.');
     }
 
     $questions = new QuestionRepository($runtime['database']);
@@ -41,221 +35,255 @@ try {
         ? null
         : $questions->findForEditor($questionId, (int) $user['id']);
     if ($question !== null && (int) $question['room_id'] !== (int) $room['id']) {
-        throw new RuntimeException('Question does not belong to this room.');
+        throw new RuntimeException('Question does not belong to this quiz.');
     }
 } catch (Throwable $exception) {
     Session::set('flash_error', $exception->getMessage());
-    Http::redirect(isset($room) ? '/q/' . rawurlencode((string) $room['slug']) : '/');
+    Http::redirect(isset($room) && $room !== null ? '/q/' . rawurlencode((string) $room['slug']) : '/');
 }
 
-$type = (string) ($question['type'] ?? 'multiple_choice');
-$prompt = (string) ($question['prompt_html'] ?? '');
-$explanation = (string) ($question['explanation_html'] ?? '');
-$points = (string) ($question['points'] ?? '1');
-$choices = [];
-$answer = [];
+// ---- Normalize the form state from a saved question, or from a draft kept after a failed save ----
+$draft = Session::forget('question_draft');
+if (!is_array($draft)
+    || ($draft['room_slug'] ?? null) !== $room['slug']
+    || ($draft['question_id'] ?? null) !== ($question === null ? null : (int) $question['id'])
+) {
+    $draft = null;
+}
+
+$f = [
+    'type' => 'multiple_choice',
+    'prompt' => '',
+    'explanation' => '',
+    'points' => '1',
+    'choices' => ['', '', '', ''],
+    'correct' => [],
+    'tf' => '',
+    'accepted' => '',
+    'numeric' => '',
+    'tolerance' => '0',
+];
+$text = static fn (mixed $v): string => is_string($v) ? $v : '';
+
 if ($question !== null) {
     $choices = json_decode((string) $question['choices_json'], true);
     $answer = json_decode((string) $question['answer_json'], true);
+    $answer = is_array($answer) ? $answer : [];
+    $f['type'] = (string) $question['type'];
+    $f['prompt'] = (string) $question['prompt_html'];
+    $f['explanation'] = (string) $question['explanation_html'];
+    $f['points'] = (string) $question['points'];
+    if (is_array($choices) && $choices !== []) {
+        $f['choices'] = array_map('strval', $choices);
+    }
+    if (isset($answer['correct_index'])) {
+        $f['correct'] = [(int) $answer['correct_index']];
+    } elseif (isset($answer['correct_indexes']) && is_array($answer['correct_indexes'])) {
+        $f['correct'] = array_map('intval', $answer['correct_indexes']);
+    }
+    if (array_key_exists('correct', $answer) && is_bool($answer['correct'])) {
+        $f['tf'] = $answer['correct'] ? 'true' : 'false';
+    }
+    if (is_array($answer['accepted_answers'] ?? null)) {
+        $f['accepted'] = implode("\n", array_map('strval', $answer['accepted_answers']));
+    }
+    if (isset($answer['correct']) && !is_bool($answer['correct'])) {
+        $f['numeric'] = (string) $answer['correct'];
+        $f['tolerance'] = (string) ($answer['tolerance'] ?? '0');
+    }
+} elseif ($draft === null && isset($_GET['type'])) {
+    $f['type'] = (string) $_GET['type'];
 }
-$choiceText = is_array($choices) ? implode("\n", $choices) : '';
-$correctNumbers = '';
-if (isset($answer['correct_index'])) {
-    $correctNumbers = (string) ((int) $answer['correct_index'] + 1);
-} elseif (isset($answer['correct_indexes']) && is_array($answer['correct_indexes'])) {
-    $correctNumbers = implode(', ', array_map(
-        static fn (int $index): int => $index + 1,
-        array_map('intval', $answer['correct_indexes']),
-    ));
+
+if ($draft !== null) {
+    $f['type'] = $text($draft['type'] ?? '') ?: $f['type'];
+    $f['prompt'] = $text($draft['prompt_html'] ?? '');
+    $f['explanation'] = $text($draft['explanation_html'] ?? '');
+    $f['points'] = $text($draft['points'] ?? '1');
+    $f['choices'] = is_array($draft['choice_text'] ?? null)
+        ? array_map($text, array_values($draft['choice_text']))
+        : $f['choices'];
+    $f['correct'] = is_array($draft['choice_correct'] ?? null)
+        ? array_map('intval', array_values($draft['choice_correct']))
+        : [];
+    $f['tf'] = $text($draft['true_false_correct'] ?? '');
+    $f['accepted'] = $text($draft['accepted_answers'] ?? '');
+    $f['numeric'] = $text($draft['numeric_answer'] ?? '');
+    $f['tolerance'] = $text($draft['numeric_tolerance'] ?? '0');
 }
-$appName = $escape($runtime['config']['app']['name']);
-header('Content-Type: text/html; charset=utf-8');
-header('Cache-Control: no-store');
+while (count($f['choices']) < 2) {
+    $f['choices'][] = '';
+}
+
+$types = [
+    'multiple_choice' => ['Choice', 'Multiple choice (one correct answer)'],
+    'multiple_select' => ['Multi', 'Multiple select (several correct answers)'],
+    'true_false' => ['True / False', 'True or false'],
+    'short_text' => ['Short text', 'Short text answer'],
+    'numeric' => ['Number', 'Numeric answer'],
+];
+if (!isset($types[$f['type']])) {
+    $f['type'] = 'multiple_choice';
+}
+$e = View::e(...);
+$isNew = $question === null;
+$slug = (string) $room['slug'];
+
+View::begin($runtime, [
+    'title' => $isNew ? 'New question' : 'Edit question',
+    'heading' => $isNew ? 'New question' : 'Edit question',
+    'user' => $user,
+    'back' => '/q/' . rawurlencode($slug),
+    'backLabel' => 'Quiz',
+    'wide' => true,
+]);
 ?>
-<!doctype html>
-<html lang="en">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <title><?= $question === null ? 'New question' : 'Edit question' ?> · <?= $appName ?></title>
-    <link rel="stylesheet" href="/assets/vendor/framework7/framework7-bundle.min.css">
-    <link rel="stylesheet" href="/assets/css/questions.css">
-</head>
-<body>
-<div id="app">
-    <div class="view view-main view-init safe-areas">
-        <div class="page">
-            <div class="navbar">
-                <div class="navbar-bg"></div>
-                <div class="navbar-inner">
-                    <div class="left">
-                        <a class="link external" href="/q/<?= $escape($room['slug']) ?>">Back</a>
-                    </div>
-                    <div class="title"><?= $question === null ? 'New question' : 'Edit question' ?></div>
-                </div>
-            </div>
-            <main class="page-content">
-                <form action="/questions/save.php" method="post" data-question-form>
-                    <input type="hidden" name="csrf_token" value="<?= $escape(Csrf::token()) ?>">
-                    <input type="hidden" name="room_slug" value="<?= $escape($room['slug']) ?>">
-                    <?php if ($question !== null): ?>
-                        <input type="hidden" name="question_id" value="<?= (int) $question['id'] ?>">
-                    <?php endif; ?>
+<form action="/questions/save.php" method="post" data-question-form>
+    <input type="hidden" name="csrf_token" value="<?= $e(Csrf::token()) ?>">
+    <input type="hidden" name="room_slug" value="<?= $e($slug) ?>">
+    <?php if (!$isNew): ?>
+        <input type="hidden" name="question_id" value="<?= (int) $question['id'] ?>">
+    <?php endif; ?>
+    <input type="hidden" name="type" value="<?= $e($f['type']) ?>" data-question-type>
 
-                    <div class="block-title">Question type</div>
-                    <div class="list">
-                        <ul>
-                            <li>
-                                <div class="item-content item-input">
-                                    <div class="item-inner">
-                                        <div class="item-input-wrap">
-                                            <select name="type" data-question-type-select>
-                                                <option value="multiple_choice" <?= $type === 'multiple_choice' ? 'selected' : '' ?>>Multiple choice</option>
-                                                <option value="multiple_select" <?= $type === 'multiple_select' ? 'selected' : '' ?>>Multiple select</option>
-                                                <option value="true_false" <?= $type === 'true_false' ? 'selected' : '' ?>>True / false</option>
-                                                <option value="short_text" <?= $type === 'short_text' ? 'selected' : '' ?>>Short text</option>
-                                                <option value="numeric" <?= $type === 'numeric' ? 'selected' : '' ?>>Numeric</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                </div>
-                            </li>
-                        </ul>
-                    </div>
+    <div class="block-title" id="type-label">Question type</div>
+    <div class="segmented segmented-strong type-picker" role="radiogroup" aria-labelledby="type-label">
+        <?php foreach ($types as $value => [$short, $long]): ?>
+            <button class="button <?= $f['type'] === $value ? 'button-active' : '' ?>" type="button"
+                    role="radio" aria-checked="<?= $f['type'] === $value ? 'true' : 'false' ?>"
+                    aria-label="<?= $e($long) ?>" data-type-option="<?= $e($value) ?>"><?= $e($short) ?></button>
+        <?php endforeach; ?>
+        <span class="segmented-highlight"></span>
+    </div>
 
-                    <div class="block-title">Prompt</div>
-                    <div
-                        class="text-editor text-editor-resizable rich-text-editor"
-                        data-rich-text-editor
-                        data-rich-text-key="prompt_html"
-                    >
-                        <div class="text-editor-content" contenteditable="true"></div>
-                    </div>
-                    <textarea data-rich-text-source="prompt_html" hidden><?= $escape($prompt) ?></textarea>
-                    <input type="hidden" name="prompt_html" data-rich-text-target="prompt_html">
-                    <div class="block-footer">
-                        Formatting allowed: paragraphs, line breaks, bold, italic,
-                        underline, lists, color, HTTPS links, and linked HTTPS images.
-                    </div>
+    <div class="block-title" id="prompt-label">Question</div>
+    <div class="text-editor text-editor-resizable rich-text-editor" data-rich-text-editor
+         data-rich-text-key="prompt_html" role="group" aria-labelledby="prompt-label">
+        <div class="text-editor-content" contenteditable="true"></div>
+    </div>
+    <textarea data-rich-text-source="prompt_html" hidden><?= $e($f['prompt']) ?></textarea>
+    <input type="hidden" name="prompt_html" data-rich-text-target="prompt_html">
 
-                    <div data-question-fields="choice">
-                        <div class="block-title">Choices</div>
-                        <div class="list">
-                            <ul>
-                                <li class="item-content item-input">
-                                    <div class="item-inner">
-                                        <div class="item-input-wrap">
-                                            <textarea name="choices" rows="6" placeholder="One choice per line"><?= $escape($choiceText) ?></textarea>
-                                        </div>
-                                    </div>
-                                </li>
-                                <li class="item-content item-input">
-                                    <div class="item-inner">
-                                        <div class="item-title item-label">Correct choice number(s)</div>
-                                        <div class="item-input-wrap">
-                                            <input name="correct_numbers" value="<?= $escape($correctNumbers) ?>" placeholder="1 or 1, 3">
-                                        </div>
-                                    </div>
-                                </li>
-                            </ul>
+    <div data-question-fields="choice">
+        <div class="block-title" id="choices-label">Answer choices</div>
+        <p class="form-hint" data-choice-hint>
+            Tick the correct answer. Blank rows are ignored.
+        </p>
+        <div class="list list-strong list-outline-ios list-dividers-ios inset" role="group" aria-labelledby="choices-label">
+            <ul data-choice-list>
+                <?php foreach ($f['choices'] as $i => $choiceText): ?>
+                    <li class="item-content item-input choice-row" data-choice-row>
+                        <?php $multi = $f['type'] === 'multiple_select'; ?>
+                        <label class="choice-correct <?= $multi ? 'checkbox' : 'radio' ?>" data-choice-mark>
+                            <input type="<?= $multi ? 'checkbox' : 'radio' ?>"
+                                   name="choice_correct[]" value="<?= $i ?>"
+                                   <?= in_array($i, $f['correct'], true) ? 'checked' : '' ?>
+                                   aria-label="Choice <?= $i + 1 ?> is correct" data-choice-correct>
+                            <i class="<?= $multi ? 'icon-checkbox' : 'icon-radio' ?>"></i>
+                        </label>
+                        <div class="item-inner">
+                            <div class="item-input-wrap">
+                                <input type="text" name="choice_text[]" maxlength="300" autocomplete="off"
+                                       value="<?= $e($choiceText) ?>" placeholder="Choice <?= $i + 1 ?>"
+                                       aria-label="Choice <?= $i + 1 ?> text" data-choice-text>
+                            </div>
                         </div>
-                    </div>
-
-                    <div data-question-fields="true_false">
-                        <div class="block-title">Correct answer</div>
-                        <div class="list">
-                            <ul>
-                                <li class="item-content item-input">
-                                    <div class="item-inner">
-                                        <div class="item-input-wrap">
-                                            <select name="true_false_correct">
-                                                <option value="true" <?= ($answer['correct'] ?? false) === true ? 'selected' : '' ?>>True</option>
-                                                <option value="false" <?= ($answer['correct'] ?? null) === false ? 'selected' : '' ?>>False</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                </li>
-                            </ul>
-                        </div>
-                    </div>
-
-                    <div data-question-fields="short_text">
-                        <div class="block-title">Accepted answers</div>
-                        <div class="list">
-                            <ul>
-                                <li class="item-content item-input">
-                                    <div class="item-inner">
-                                        <div class="item-input-wrap">
-                                            <textarea name="accepted_answers" rows="5" placeholder="One accepted answer per line"><?= $escape(is_array($answer['accepted_answers'] ?? null) ? implode("\n", $answer['accepted_answers']) : '') ?></textarea>
-                                        </div>
-                                    </div>
-                                </li>
-                            </ul>
-                        </div>
-                    </div>
-
-                    <div data-question-fields="numeric">
-                        <div class="block-title">Numeric answer</div>
-                        <div class="list">
-                            <ul>
-                                <li class="item-content item-input">
-                                    <div class="item-inner">
-                                        <div class="item-title item-label">Correct value</div>
-                                        <div class="item-input-wrap">
-                                            <input name="numeric_answer" type="number" step="any" value="<?= $escape($answer['correct'] ?? '') ?>">
-                                        </div>
-                                    </div>
-                                </li>
-                                <li class="item-content item-input">
-                                    <div class="item-inner">
-                                        <div class="item-title item-label">Tolerance (plus or minus)</div>
-                                        <div class="item-input-wrap">
-                                            <input name="numeric_tolerance" type="number" min="0" step="any" value="<?= $escape($answer['tolerance'] ?? '0') ?>">
-                                        </div>
-                                    </div>
-                                </li>
-                            </ul>
-                        </div>
-                    </div>
-
-                    <div class="block-title">Feedback and points</div>
-                    <div class="list">
-                        <ul>
-                            <li class="item-content item-input">
-                                <div class="item-inner">
-                                    <div class="item-title item-label">Points</div>
-                                    <div class="item-input-wrap">
-                                        <input name="points" type="number" min="0.1" max="100" step="0.1" value="<?= $escape($points) ?>" required>
-                                    </div>
-                                </div>
-                            </li>
-                        </ul>
-                    </div>
-                    <div class="block-title">Optional explanation</div>
-                    <div
-                        class="text-editor text-editor-resizable rich-text-editor"
-                        data-rich-text-editor
-                        data-rich-text-key="explanation_html"
-                    >
-                        <div class="text-editor-content" contenteditable="true"></div>
-                    </div>
-                    <textarea data-rich-text-source="explanation_html" hidden><?= $escape($explanation) ?></textarea>
-                    <input type="hidden" name="explanation_html" data-rich-text-target="explanation_html">
-
-                    <div class="block">
-                        <button class="button button-fill button-large" type="submit">
-                            <?= $question === null ? 'Add question' : 'Save question' ?>
-                        </button>
-                    </div>
-                </form>
-            </main>
+                        <button class="link icon-only choice-remove" type="button" data-choice-remove
+                                aria-label="Remove choice <?= $i + 1 ?>" title="Remove choice"><?= View::icon('close') ?></button>
+                    </li>
+                <?php endforeach; ?>
+            </ul>
+        </div>
+        <div class="block">
+            <button class="button button-tonal" type="button" data-choice-add>
+                <?= View::icon('plus', 18) ?><span>Add choice</span>
+            </button>
         </div>
     </div>
-</div>
-<script src="/assets/vendor/framework7/framework7-bundle.min.js"></script>
-<script src="/assets/js/app.js"></script>
-<script src="/assets/js/rich-text.js"></script>
-<script src="/assets/js/questions.js"></script>
-</body>
-</html>
 
+    <div data-question-fields="true_false">
+        <div class="block-title" id="tf-label">Correct answer</div>
+        <div class="list list-strong list-outline-ios list-dividers-ios inset" role="radiogroup" aria-labelledby="tf-label">
+            <ul>
+                <?php foreach (['true' => 'True', 'false' => 'False'] as $value => $label): ?>
+                    <li>
+                        <label class="item-radio item-content">
+                            <input type="radio" name="true_false_correct" value="<?= $value ?>" <?= $f['tf'] === $value ? 'checked' : '' ?>>
+                            <i class="icon-radio"></i>
+                            <div class="item-inner"><div class="item-title"><?= $label ?></div></div>
+                        </label>
+                    </li>
+                <?php endforeach; ?>
+            </ul>
+        </div>
+    </div>
+
+    <div data-question-fields="short_text">
+        <div class="block-title">Accepted answers</div>
+        <div class="list list-strong list-outline-ios list-dividers-ios inset">
+            <ul>
+                <li class="item-content item-input">
+                    <div class="item-inner">
+                        <div class="item-input-wrap">
+                            <textarea name="accepted_answers" rows="4" aria-label="Accepted answers, one per line"
+                                      placeholder="One accepted answer per line"><?= $e($f['accepted']) ?></textarea>
+                        </div>
+                    </div>
+                </li>
+            </ul>
+        </div>
+    </div>
+
+    <div data-question-fields="numeric">
+        <div class="block-title">Numeric answer</div>
+        <div class="list list-strong list-outline-ios list-dividers-ios inset">
+            <ul>
+                <li class="item-content item-input">
+                    <div class="item-inner">
+                        <label class="item-title item-label" for="numeric-answer">Correct value</label>
+                        <div class="item-input-wrap">
+                            <input id="numeric-answer" name="numeric_answer" type="number" step="any" value="<?= $e($f['numeric']) ?>">
+                        </div>
+                    </div>
+                </li>
+                <li class="item-content item-input">
+                    <div class="item-inner">
+                        <label class="item-title item-label" for="numeric-tolerance">Tolerance (plus or minus)</label>
+                        <div class="item-input-wrap">
+                            <input id="numeric-tolerance" name="numeric_tolerance" type="number" min="0" step="any" value="<?= $e($f['tolerance']) ?>">
+                        </div>
+                    </div>
+                </li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="block-title">Points</div>
+    <div class="list list-strong list-outline-ios list-dividers-ios inset">
+        <ul>
+            <li class="item-content item-input">
+                <div class="item-inner">
+                    <label class="item-title item-label" for="points">Points for a correct answer</label>
+                    <div class="item-input-wrap">
+                        <input id="points" name="points" type="number" min="0.1" max="100" step="0.1" value="<?= $e($f['points']) ?>" required>
+                    </div>
+                </div>
+            </li>
+        </ul>
+    </div>
+
+    <div class="block-title" id="explanation-label">Explanation (optional)</div>
+    <div class="text-editor text-editor-resizable rich-text-editor" data-rich-text-editor
+         data-rich-text-key="explanation_html" role="group" aria-labelledby="explanation-label">
+        <div class="text-editor-content" contenteditable="true"></div>
+    </div>
+    <textarea data-rich-text-source="explanation_html" hidden><?= $e($f['explanation']) ?></textarea>
+    <input type="hidden" name="explanation_html" data-rich-text-target="explanation_html">
+
+    <div class="editor-actions">
+        <a class="button button-large external" href="/q/<?= $e(rawurlencode($slug)) ?>">Cancel</a>
+        <button class="button button-fill button-large" type="submit"><?= $isNew ? 'Add question' : 'Save question' ?></button>
+    </div>
+</form>
+<?php
+View::end('', ['/assets/js/rich-text.js', '/assets/js/questions.js']);

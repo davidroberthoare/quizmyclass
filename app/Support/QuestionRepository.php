@@ -32,8 +32,8 @@ final class QuestionRepository
         $questionData = $this->validate($input);
         $isOwner = (int) $room['owner_id'] === $actorId;
 
-        $this->database->beginTransaction();
-        try {
+        $id = 0;
+        $this->transaction(function () use (&$id, $isOwner, $roomId, $actorId, $room, $questionData): void {
             if (!$isOwner) {
                 $membership = $this->database->prepare(
                     'INSERT OR IGNORE INTO room_memberships (room_id, user_id, role, created_at) ' .
@@ -51,7 +51,7 @@ final class QuestionRepository
                 );
                 $countStatement->execute(['room_id' => $roomId, 'author_id' => $actorId]);
                 if ((int) $countStatement->fetchColumn() >= (int) $room['student_question_cap']) {
-                    throw new RuntimeException('You have reached this room’s question limit.');
+                    throw new RuntimeException('You have reached this quiz’s question limit.');
                 }
             }
 
@@ -60,7 +60,7 @@ final class QuestionRepository
             );
             $total->execute(['room_id' => $roomId]);
             if ((int) $total->fetchColumn() >= (int) $room['max_questions']) {
-                throw new RuntimeException('This room has reached its question limit.');
+                throw new RuntimeException('This quiz has reached its question limit.');
             }
 
             $position = $this->database->prepare(
@@ -91,13 +91,7 @@ final class QuestionRepository
             ]);
             $id = (int) $this->database->lastInsertId();
             $this->audit($actorId, $roomId, 'question.created', $id);
-            $this->database->commit();
-        } catch (\Throwable $exception) {
-            if ($this->database->inTransaction()) {
-                $this->database->rollBack();
-            }
-            throw $exception;
-        }
+        });
 
         $question = $this->findForEditor($id, $actorId);
         if ($question === null) {
@@ -120,8 +114,7 @@ final class QuestionRepository
         }
         $questionData = $this->validate($input);
 
-        $this->database->beginTransaction();
-        try {
+        $this->transaction(function () use ($questionData, $questionId, $actorId, $question): void {
             $statement = $this->database->prepare(
                 'UPDATE questions SET type = :type, prompt_html = :prompt_html, ' .
                 'explanation_html = :explanation_html, choices_json = :choices_json, ' .
@@ -140,13 +133,7 @@ final class QuestionRepository
                 'id' => $questionId,
             ]);
             $this->audit($actorId, (int) $question['room_id'], 'question.updated', $questionId);
-            $this->database->commit();
-        } catch (\Throwable $exception) {
-            if ($this->database->inTransaction()) {
-                $this->database->rollBack();
-            }
-            throw $exception;
-        }
+        });
 
         $updated = $this->findForEditor($questionId, $actorId);
         if ($updated === null) {
@@ -164,8 +151,7 @@ final class QuestionRepository
         $room = $this->editableRoom((int) $question['room_id']);
         $this->assertOwner($room, $actorId);
 
-        $this->database->beginTransaction();
-        try {
+        $this->transaction(function () use ($status, $questionId, $actorId, $question): void {
             $statement = $this->database->prepare(
                 'UPDATE questions SET status = :status, updated_at = :updated_at WHERE id = :id'
             );
@@ -175,13 +161,30 @@ final class QuestionRepository
                 'id' => $questionId,
             ]);
             $this->audit($actorId, (int) $question['room_id'], 'question.' . $status, $questionId);
-            $this->database->commit();
-        } catch (\Throwable $exception) {
-            if ($this->database->inTransaction()) {
-                $this->database->rollBack();
-            }
-            throw $exception;
+        });
+    }
+
+    public function moderateAll(int $roomId, int $actorId, string $status): void
+    {
+        if (!in_array($status, ['approved', 'draft'], true)) {
+            throw new RuntimeException('Bulk moderation status is invalid.');
         }
+        $room = $this->editableRoom($roomId);
+        $this->assertOwner($room, $actorId);
+
+        $this->transaction(function () use ($status, $roomId, $actorId): void {
+            $statement = $this->database->prepare(
+                'UPDATE questions SET status = :status, updated_at = :updated_at ' .
+                'WHERE room_id = :room_id AND status = :from_status'
+            );
+            $statement->execute([
+                'status' => $status,
+                'updated_at' => gmdate('Y-m-d\TH:i:s\Z'),
+                'room_id' => $roomId,
+                'from_status' => $status === 'approved' ? 'draft' : 'approved',
+            ]);
+            $this->audit($actorId, $roomId, 'question.' . $status . '_all', 0);
+        });
     }
 
     public function move(int $questionId, int $actorId, string $direction): void
@@ -208,19 +211,12 @@ final class QuestionRepository
             return;
         }
 
-        $this->database->beginTransaction();
-        try {
+        $this->transaction(function () use ($other, $questionId, $question, $actorId, $direction): void {
             $update = $this->database->prepare('UPDATE questions SET position = :position WHERE id = :id');
             $update->execute(['position' => $other['position'], 'id' => $questionId]);
             $update->execute(['position' => $question['position'], 'id' => $other['id']]);
             $this->audit($actorId, (int) $question['room_id'], 'question.moved_' . $direction, $questionId);
-            $this->database->commit();
-        } catch (\Throwable $exception) {
-            if ($this->database->inTransaction()) {
-                $this->database->rollBack();
-            }
-            throw $exception;
-        }
+        });
     }
 
     public function reorderTo(int $questionId, int $actorId, int $targetPosition): void
@@ -240,8 +236,7 @@ final class QuestionRepository
             return;
         }
 
-        $this->database->beginTransaction();
-        try {
+        $this->transaction(function () use ($targetPosition, $currentPosition, $question, $questionId, $actorId): void {
             if ($targetPosition < $currentPosition) {
                 $statement = $this->database->prepare(
                     'UPDATE questions SET position = position + 1, updated_at = :updated_at ' .
@@ -268,13 +263,7 @@ final class QuestionRepository
                 'id' => $questionId,
             ]);
             $this->audit($actorId, (int) $question['room_id'], 'question.reordered', $questionId);
-            $this->database->commit();
-        } catch (\Throwable $exception) {
-            if ($this->database->inTransaction()) {
-                $this->database->rollBack();
-            }
-            throw $exception;
-        }
+        });
     }
 
     /** @return list<array<string, mixed>> */
@@ -319,7 +308,7 @@ final class QuestionRepository
             throw new RuntimeException('You may edit only your own questions.');
         }
         if ($room['state'] !== 'editing') {
-            throw new RuntimeException('Questions cannot be edited after a room is activated.');
+            throw new RuntimeException('Questions cannot be edited after a quiz is activated.');
         }
         return $question;
     }
@@ -376,7 +365,7 @@ final class QuestionRepository
                 array_map(static fn (string $value): string => trim($value), $accepted ?: []),
                 static fn (string $value): bool => $value !== '',
             )));
-            if ($accepted === [] || count($accepted) > 20 || max(array_map('strlen', $accepted)) > 200) {
+            if ($accepted === [] || count($accepted) > 20 || max(array_map('mb_strlen', $accepted)) > 200) {
                 throw new RuntimeException('Provide 1 to 20 accepted answers, each at most 200 characters.');
             }
             $answer = ['accepted_answers' => $accepted];
@@ -415,11 +404,16 @@ final class QuestionRepository
             static fn (string $value): bool => $value !== '',
         )));
         if (count($choices) < 2 || count($choices) > 10
-            || max(array_map('strlen', $choices)) > 300
+            || max(array_map('mb_strlen', $choices)) > 300
         ) {
             throw new RuntimeException('Provide 2 to 10 unique choices, each at most 300 characters.');
         }
         return $choices;
+    }
+
+    private function transaction(callable $work): void
+    {
+        Database::transactional($this->database, $work);
     }
 
     /** @return array<string, mixed> */
@@ -446,7 +440,7 @@ final class QuestionRepository
     {
         $room = $this->findRoom($roomId);
         if ($room['state'] !== 'editing') {
-            throw new RuntimeException('Questions cannot be changed after a room is activated.');
+            throw new RuntimeException('Questions cannot be changed after a quiz is activated.');
         }
         return $room;
     }
@@ -458,7 +452,7 @@ final class QuestionRepository
         $statement->execute(['id' => $roomId]);
         $room = $statement->fetch();
         if (!is_array($room)) {
-            throw new RuntimeException('Room not found.');
+            throw new RuntimeException('Quiz not found.');
         }
         return $room;
     }
@@ -467,7 +461,7 @@ final class QuestionRepository
     private function assertOwner(array $room, int $actorId): void
     {
         if ((int) $room['owner_id'] !== $actorId) {
-            throw new RuntimeException('Only the room owner may perform this action.');
+            throw new RuntimeException('Only the quiz owner may perform this action.');
         }
     }
 

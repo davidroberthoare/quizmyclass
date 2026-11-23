@@ -20,6 +20,10 @@ try {
         $database,
         $runtime['config']['paths']['migrations'],
     );
+    if (!$runtime['config']['app']['debug']) {
+        // Public probes learn only that the app and database are healthy.
+        Http::json(['status' => 'ok']);
+    }
     Http::json([
         'status' => 'ok',
         'application' => $runtime['config']['app']['name'],

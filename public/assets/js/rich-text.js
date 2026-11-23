@@ -36,6 +36,24 @@
         span.dispatchEvent(new Event('input', { bubbles: true }));
     };
 
+    // app.dialog.prompt is asynchronous and steals focus, so remember the selection and restore it.
+    const askThen = (title, text, apply) => {
+        const selection = window.getSelection();
+        const saved = selection && selection.rangeCount > 0 ? selection.getRangeAt(0).cloneRange() : null;
+        app.dialog.prompt(text, title, (value) => {
+            const answer = (value || '').trim();
+            if (answer === '') {
+                return;
+            }
+            if (saved) {
+                const current = window.getSelection();
+                current.removeAllRanges();
+                current.addRange(saved);
+            }
+            apply(answer);
+        });
+    };
+
     window.QuizMyClassRichText = {
         init(container) {
             container.querySelectorAll('[data-rich-text-editor]').forEach((element) => {
@@ -57,7 +75,7 @@
                     buttons: [
                         ['bold', 'italic', 'underline'],
                         ['orderedList', 'unorderedList'],
-                        ['fontColor', 'fontSize', 'fontStyle', 'link', 'image'],
+                        ['fontColor', 'fontSize', 'link', 'image'],
                     ],
                     customButtons: {
                         bold: {
@@ -82,78 +100,44 @@
                         },
                         fontColor: {
                             content: '<b>A</b>',
-                            onClick: () => {
-                                const color = window.prompt('Text color (hex or common color name):');
-                                if (!color) {
-                                    return;
-                                }
-                                const value = color.trim();
+                            onClick: () => askThen('Text color', 'Hex (#1a73e8) or a common color name', (value) => {
                                 if (/^#[0-9a-f]{3,8}$/i.test(value) || namedColors.has(value.toLowerCase())) {
                                     applyRangeStyle('color', value);
                                 } else {
                                     app.dialog.alert('Use a hex color or a common color name.', 'Text color');
                                 }
-                            },
+                            }),
                         },
                         fontSize: {
                             content: '12',
-                            onClick: () => {
-                                const size = window.prompt('Font size in pixels (10–72):');
-                                if (!size) {
-                                    return;
-                                }
+                            onClick: () => askThen('Font size', 'Size in pixels (10–72)', (size) => {
                                 const value = Number(size);
                                 if (Number.isInteger(value) && value >= 10 && value <= 72) {
                                     applyRangeStyle('font-size', value + 'px');
                                 } else {
                                     app.dialog.alert('Enter a whole number from 10 to 72.', 'Font size');
                                 }
-                            },
-                        },
-                        fontStyle: {
-                            content: 'Aa',
-                            onClick: () => {
-                                const style = window.prompt('Font style (normal, italic, or oblique):');
-                                if (!style) {
-                                    return;
-                                }
-                                const value = style.trim().toLowerCase();
-                                if (['normal', 'italic', 'oblique'].includes(value)) {
-                                    applyRangeStyle('font-style', value);
-                                } else {
-                                    app.dialog.alert('Choose normal, italic, or oblique.', 'Font style');
-                                }
-                            },
+                            }),
                         },
                         link: {
                             content: '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3.9 12a5 5 0 0 1 5-5h3v2h-3a3 3 0 0 0 0 6h3v2h-3a5 5 0 0 1-5-5Zm7-1h2.2v2H10.9Zm5.1-4h-3v2h3a3 3 0 0 1 0 6h-3v2h3a5 5 0 0 0 0-10Z"/></svg>',
-                            onClick: () => {
-                                const url = window.prompt('HTTPS link URL');
-                                if (!url) {
-                                    return;
-                                }
-                                const value = url.trim();
+                            onClick: () => askThen('Link', 'HTTPS link URL', (value) => {
                                 if (value.startsWith('https://')) {
                                     document.execCommand('createLink', false, value);
                                 } else {
                                     app.dialog.alert('Use an HTTPS URL.', 'Link');
                                 }
-                            },
+                            }),
                         },
                         image: {
                             content: '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M21 19V5H3v14h18ZM5 17l4.5-5.5 3.5 4 2.5-3 3.5 4.5H5Zm12-9a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z"/></svg>',
-                            onClick: () => {
-                                const url = window.prompt('HTTPS image URL');
-                                if (!url) {
-                                    return;
-                                }
-                                const value = url.trim();
+                            onClick: () => askThen('Image', 'HTTPS image URL', (value) => {
                                 if (value.startsWith('https://')) {
                                     document.execCommand('insertImage', false, value);
                                 } else {
                                     app.dialog.alert('Use an HTTPS image URL.', 'Image');
                                 }
-                            },
+                            }),
                         },
                     },
                     on: {

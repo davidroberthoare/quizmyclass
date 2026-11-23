@@ -10,6 +10,11 @@ use QuizMyClass\Support\RoomRepository;
 use QuizMyClass\Support\UserRepository;
 use QuizMyClass\Support\QuestionRepository;
 use QuizMyClass\Support\RichTextSanitizer;
+use QuizMyClass\Support\QuizRepository;
+use QuizMyClass\Support\QuizSettings;
+use QuizMyClass\Support\Grader;
+use QuizMyClass\Support\AttemptRepository;
+use QuizMyClass\Support\ResultsRepository;
 use QuizMyClass\Auth\AccessPolicy;
 use QuizMyClass\Auth\GoogleClient;
 
@@ -21,6 +26,11 @@ require_once dirname(__DIR__) . '/app/Support/UserRepository.php';
 require_once dirname(__DIR__) . '/app/Support/RoomRepository.php';
 require_once dirname(__DIR__) . '/app/Support/RichTextSanitizer.php';
 require_once dirname(__DIR__) . '/app/Support/QuestionRepository.php';
+require_once dirname(__DIR__) . '/app/Support/QuizSettings.php';
+require_once dirname(__DIR__) . '/app/Support/Grader.php';
+require_once dirname(__DIR__) . '/app/Support/QuizRepository.php';
+require_once dirname(__DIR__) . '/app/Support/AttemptRepository.php';
+require_once dirname(__DIR__) . '/app/Support/ResultsRepository.php';
 require_once dirname(__DIR__) . '/app/Auth/AccessPolicy.php';
 require_once dirname(__DIR__) . '/app/Auth/GoogleClient.php';
 
@@ -84,9 +94,9 @@ $tests['migrations are repeatable'] = static function () use ($config): void {
     $database = Database::connect($config);
     $migrator = new Migrator($database, $config['paths']['migrations']);
     $applied = $migrator->migrate();
-    assert($applied === ['001_foundation', '002_identity_rooms', '003_questions']);
+    assert($applied === ['001_foundation', '002_identity_rooms', '003_questions', '004_quiz_delivery']);
     assert($migrator->migrate() === []);
-    assert($migrator->appliedCount() === 3);
+    assert($migrator->appliedCount() === 4);
 };
 
 $tests['backups are consistent and private'] = static function () use ($config): void {
@@ -98,7 +108,7 @@ $tests['backups are consistent and private'] = static function () use ($config):
 
     $copy = new PDO('sqlite:' . $path);
     $count = (int) $copy->query('SELECT COUNT(*) FROM qmc_migrations')->fetchColumn();
-    assert($count === 3);
+    assert($count === 4);
 };
 
 $tests['google profile identity follows stable subject'] = static function () use ($config): void {
@@ -277,6 +287,234 @@ $tests['all supported question types validate'] = static function () use ($confi
     }
     $list = $questions->listForRoom((int) $room['id'], (int) $owner['id'], true);
     assert(count($list) === 5);
+};
+
+$tests['bulk moderation only touches matching statuses and rejects non-owners'] = static function () use ($config): void {
+    $database = Database::connect($config);
+    $users = new UserRepository($database);
+    $owner = $users->syncGoogleProfile(['sub' => 'bulk-owner', 'email' => 'bulk-owner@school.example', 'name' => 'Bulk Owner']);
+    $student = $users->syncGoogleProfile(['sub' => 'bulk-student', 'email' => 'bulk-student@school.example', 'name' => 'Bulk Student']);
+    $room = (new RoomRepository($database))->create((int) $owner['id'], 'Bulk Room', 'bulk-room');
+    $questions = new QuestionRepository($database);
+    $make = static fn (string $text): array => $questions->create((int) $room['id'], (int) $owner['id'], [
+        'type' => 'true_false',
+        'prompt_html' => '<p>' . $text . '</p>',
+        'correct' => 'true',
+        'points' => '1',
+    ]);
+    $draft = $make('draft');
+    $rejected = $make('rejected');
+    $hidden = $make('hidden');
+    $questions->moderate((int) $rejected['id'], (int) $owner['id'], 'rejected');
+    $questions->moderate((int) $hidden['id'], (int) $owner['id'], 'hidden');
+
+    $questions->moderateAll((int) $room['id'], (int) $owner['id'], 'approved');
+    $statuses = array_column($questions->listForRoom((int) $room['id'], (int) $owner['id'], true), 'status', 'id');
+    assert($statuses[$draft['id']] === 'approved');
+    assert($statuses[$rejected['id']] === 'rejected', 'approve all must not resurrect rejected questions');
+    assert($statuses[$hidden['id']] === 'hidden', 'approve all must not unhide questions');
+
+    $questions->moderateAll((int) $room['id'], (int) $owner['id'], 'draft');
+    $statuses = array_column($questions->listForRoom((int) $room['id'], (int) $owner['id'], true), 'status', 'id');
+    assert($statuses[$draft['id']] === 'draft');
+    assert($statuses[$rejected['id']] === 'rejected');
+
+    try {
+        $questions->moderateAll((int) $room['id'], (int) $student['id'], 'approved');
+        assert(false, 'students must not bulk moderate');
+    } catch (RuntimeException $exception) {
+        assert(str_contains($exception->getMessage(), 'owner'));
+    }
+};
+
+$tests['multibyte choices count characters and failed transactions roll back'] = static function () use ($config): void {
+    $database = Database::connect($config);
+    $users = new UserRepository($database);
+    $owner = $users->syncGoogleProfile(['sub' => 'mb-owner', 'email' => 'mb-owner@school.example', 'name' => 'MB Owner']);
+    $room = (new RoomRepository($database))->create((int) $owner['id'], 'Multibyte', 'multibyte-room');
+    $questions = new QuestionRepository($database);
+    // 200 two-byte characters is 400 bytes but only 200 characters: allowed (limit is 300 characters).
+    $question = $questions->create((int) $room['id'], (int) $owner['id'], [
+        'type' => 'multiple_choice',
+        'prompt_html' => '<p>Unicode</p>',
+        'choices' => str_repeat('é', 200) . "\nB",
+        'correct' => [0],
+        'points' => '1',
+    ]);
+    assert($question['id'] > 0);
+
+    $before = (int) $database->query('SELECT COUNT(*) FROM audit_events')->fetchColumn();
+    try {
+        Database::transactional($database, static function () use ($database): void {
+            $database->exec("INSERT INTO audit_events (action, created_at, details_json) VALUES ('x', 'now', '{}')");
+            throw new RuntimeException('boom');
+        });
+        assert(false);
+    } catch (RuntimeException $exception) {
+        assert($exception->getMessage() === 'boom');
+    }
+    assert((int) $database->query('SELECT COUNT(*) FROM audit_events')->fetchColumn() === $before);
+    assert(!$database->inTransaction());
+};
+
+$tests['grader scores every question type and seeded order is stable'] = static function (): void {
+    $mc = ['id' => 1, 'type' => 'multiple_choice', 'choices' => ['a', 'b', 'c'], 'answer' => ['correct_index' => 1], 'points' => 2.0];
+    assert(Grader::grade($mc, '1') === ['correct' => true, 'points' => 2.0]);
+    assert(Grader::grade($mc, 0)['correct'] === false);
+    assert(Grader::grade($mc, 99)['correct'] === false, 'out-of-range choice is unanswered');
+    $ms = ['id' => 2, 'type' => 'multiple_select', 'choices' => ['a', 'b', 'c'], 'answer' => ['correct_indexes' => [0, 2]], 'points' => 1.0];
+    assert(Grader::grade($ms, [2, 0])['correct'] === true);
+    assert(Grader::grade($ms, [0])['correct'] === false, 'multiple select is all-or-nothing');
+    $tf = ['id' => 3, 'type' => 'true_false', 'choices' => [], 'answer' => ['correct' => false], 'points' => 1.0];
+    assert(Grader::grade($tf, 'false')['correct'] === true);
+    assert(Grader::grade($tf, 'true')['correct'] === false);
+    $text = ['id' => 4, 'type' => 'short_text', 'choices' => [], 'answer' => ['accepted_answers' => ['Mitochondria']], 'points' => 1.0];
+    assert(Grader::grade($text, "  mitochondria \n")['correct'] === true);
+    assert(Grader::grade($text, 'nucleus')['correct'] === false);
+    $num = ['id' => 5, 'type' => 'numeric', 'choices' => [], 'answer' => ['correct' => 3.14, 'tolerance' => 0.01], 'points' => 1.0];
+    assert(Grader::grade($num, '3.145')['correct'] === true);
+    assert(Grader::grade($num, '3.2')['correct'] === false);
+    assert(Grader::grade($num, 'abc')['correct'] === false);
+    assert(Grader::order(10, 42) === Grader::order(10, 42));
+    $sorted = Grader::order(10, 7);
+    sort($sorted);
+    assert($sorted === range(0, 9));
+    $presented = Grader::present([$mc], ['shuffle_choices' => true], 5);
+    assert(!isset($presented[0]['answer']) && !isset($presented[0]['explanation_html']), 'answer keys must not reach students');
+};
+
+$tests['quiz lifecycle freezes revisions, enforces attempts, and applies feedback rules'] = static function () use ($config): void {
+    $database = Database::connect($config);
+    $users = new UserRepository($database);
+    $owner = $users->syncGoogleProfile(['sub' => 'life-owner', 'email' => 'life-owner@school.example', 'name' => 'Life Owner']);
+    $student = $users->syncGoogleProfile(['sub' => 'life-student', 'email' => 'life-student@school.example', 'name' => 'Life Student']);
+    $rooms = new RoomRepository($database);
+    $room = $rooms->create((int) $owner['id'], 'Lifecycle', 'lifecycle-quiz');
+    $questions = new QuestionRepository($database);
+    $quiz = new QuizRepository($database, 'UTC');
+    $attempts = new AttemptRepository($database);
+
+    try {
+        $quiz->activate((int) $room['id'], (int) $owner['id']);
+        assert(false, 'cannot activate without approved questions');
+    } catch (RuntimeException $exception) {
+        assert(str_contains($exception->getMessage(), 'Approve at least'));
+    }
+
+    $one = $questions->create((int) $room['id'], (int) $owner['id'], [
+        'type' => 'multiple_choice', 'prompt_html' => '<p>Pick b</p>', 'choices' => "a\nb", 'correct' => [1],
+        'explanation_html' => '<p>Because b</p>', 'points' => '2',
+    ]);
+    $questions->create((int) $room['id'], (int) $owner['id'], [
+        'type' => 'true_false', 'prompt_html' => '<p>Unapproved</p>', 'correct' => 'true', 'points' => '1',
+    ]);
+    $questions->moderate((int) $one['id'], (int) $owner['id'], 'approved');
+
+    try {
+        $quiz->saveSettings((int) $room['id'], (int) $student['id'], []);
+        assert(false, 'students must not change settings');
+    } catch (RuntimeException $exception) {
+        assert(str_contains($exception->getMessage(), 'owner'));
+    }
+    $quiz->saveSettings((int) $room['id'], (int) $owner['id'], [
+        'min_approved' => '1', 'max_attempts' => '2', 'feedback_when' => 'after_close',
+        'show_score' => '1', 'show_correctness' => '1', 'show_explanations' => '1',
+    ]);
+
+    $revisionId = $quiz->activate((int) $room['id'], (int) $owner['id']);
+    $room = $rooms->findById((int) $room['id']);
+    assert($room['state'] === 'active');
+    $revision = $quiz->revision($revisionId);
+    assert(count(QuizRepository::revisionQuestions($revision)) === 1, 'only approved questions are frozen');
+
+    // Editing is locked while active, and later edits never change the frozen revision.
+    try {
+        $questions->update((int) $one['id'], (int) $owner['id'], [
+            'type' => 'multiple_choice', 'prompt_html' => '<p>Changed</p>', 'choices' => "a\nb", 'correct' => [0], 'points' => '1',
+        ]);
+        assert(false, 'active quiz content must be immutable');
+    } catch (RuntimeException $exception) {
+        assert(str_contains($exception->getMessage(), 'activated'));
+    }
+
+    $attempt = $attempts->startOrResume($room, $revision, (int) $student['id']);
+    $again = $attempts->startOrResume($room, $revision, (int) $student['id']);
+    assert((int) $attempt['id'] === (int) $again['id'], 'refresh resumes the unsubmitted attempt');
+    $attempts->saveAnswer((int) $attempt['id'], (int) $student['id'], (int) $one['id'], '1');
+    try {
+        $attempts->saveAnswer((int) $attempt['id'], (int) $owner['id'], (int) $one['id'], '0');
+        assert(false, 'other users cannot write to an attempt');
+    } catch (RuntimeException $exception) {
+        assert(str_contains($exception->getMessage(), 'not found'));
+    }
+    $submitted = $attempts->submit((int) $attempt['id'], (int) $student['id']);
+    assert($submitted['status'] === 'submitted' && (float) $submitted['score'] === 2.0 && (float) $submitted['max_score'] === 2.0);
+    $feedback = QuizSettings::feedback(QuizRepository::revisionSettings($revision), 'active', QuizRepository::now());
+    assert($feedback['score'] === false && $feedback['explanations'] === false, 'after_close hides feedback while active');
+
+    $second = $attempts->startOrResume($room, $revision, (int) $student['id']);
+    $attempts->submit((int) $second['id'], (int) $student['id']);
+    try {
+        $attempts->startOrResume($room, $revision, (int) $student['id']);
+        assert(false, 'max attempts must be enforced');
+    } catch (RuntimeException $exception) {
+        assert(str_contains($exception->getMessage(), 'attempts'));
+    }
+
+    $results = new ResultsRepository($database);
+    $summary = $results->summary($revisionId, (int) $owner['id']);
+    assert($summary['students'] === 1 && $summary['attempts'] === 2 && round((float) $summary['average_best']) === 100.0);
+    $analysis = $results->itemAnalysis($revisionId, (int) $owner['id'], QuizRepository::revisionQuestions($revision));
+    assert($analysis[0]['correct'] === 1 && $analysis[0]['picks'] === [1 - 1, 1] || $analysis[0]['picks'][1] >= 1);
+
+    $quiz->close((int) $room['id'], (int) $owner['id']);
+    $closed = $rooms->findById((int) $room['id']);
+    $feedback = QuizSettings::feedback(QuizRepository::revisionSettings($revision), $closed['state'], QuizRepository::now());
+    assert($feedback['score'] === true && $feedback['explanations'] === true, 'after_close reveals feedback once closed');
+
+    try {
+        $results->reset((int) $room['id'], $revisionId, (int) $student['id'], null);
+        assert(false, 'students must not reset results');
+    } catch (RuntimeException $exception) {
+        assert(str_contains($exception->getMessage(), 'owner'));
+    }
+    assert($results->reset((int) $room['id'], $revisionId, (int) $owner['id'], (int) $student['id']) === 2);
+};
+
+$tests['quiz rename is owner-only, editing-only, and keeps links unique'] = static function () use ($config): void {
+    $database = Database::connect($config);
+    $users = new UserRepository($database);
+    $owner = $users->syncGoogleProfile(['sub' => 'rn-owner', 'email' => 'rn-owner@school.example', 'name' => 'RN Owner']);
+    $other = $users->syncGoogleProfile(['sub' => 'rn-other', 'email' => 'rn-other@school.example', 'name' => 'RN Other']);
+    $rooms = new RoomRepository($database);
+    $room = $rooms->create((int) $owner['id'], 'Old name', 'rename-old');
+    $rooms->create((int) $owner['id'], 'Taken', 'rename-taken');
+
+    $rooms->rename((int) $room['id'], (int) $owner['id'], 'New name', 'rename-new');
+    $updated = $rooms->findById((int) $room['id']);
+    assert($updated['name'] === 'New name' && $updated['slug'] === 'rename-new');
+    assert($rooms->findBySlug('rename-old') === null);
+
+    foreach ([
+        [(int) $other['id'], 'X', 'rename-x', 'owner'],
+        [(int) $owner['id'], 'X', 'rename-taken', 'already in use'],
+        [(int) $owner['id'], 'X', 'Bad Slug!', 'lowercase'],
+        [(int) $owner['id'], '   ', 'rename-ok', 'between 1 and 120'],
+    ] as [$actor, $name, $slug, $expected]) {
+        try {
+            $rooms->rename((int) $room['id'], $actor, $name, $slug);
+            assert(false, 'rename should have been rejected: ' . $expected);
+        } catch (RuntimeException $exception) {
+            assert(str_contains($exception->getMessage(), $expected));
+        }
+    }
+    $database->exec("UPDATE rooms SET state = 'active' WHERE id = " . (int) $room['id']);
+    try {
+        $rooms->rename((int) $room['id'], (int) $owner['id'], 'Late', 'rename-late');
+        assert(false, 'rename must be blocked once active');
+    } catch (RuntimeException $exception) {
+        assert(str_contains($exception->getMessage(), 'being edited'));
+    }
 };
 
 $tests['collaboration protects ownership answers and moderation'] = static function () use ($config): void {

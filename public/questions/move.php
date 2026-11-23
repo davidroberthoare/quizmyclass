@@ -38,12 +38,14 @@ try {
             (int) $user['id'],
             $targetPosition,
         );
-    } else {
+    } elseif (isset($_POST['direction'])) {
         $repository->move(
             (int) ($_POST['question_id'] ?? 0),
             (int) $user['id'],
-            (string) ($_POST['direction'] ?? ''),
+            (string) $_POST['direction'],
         );
+    } else {
+        throw new RuntimeException('Choose a target position or a direction.');
     }
     if ($isAjax) {
         Http::json(['status' => 'ok']);
