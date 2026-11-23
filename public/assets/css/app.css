@@ -647,3 +647,9 @@ button.link {
         border: 1px solid #999;
     }
 }
+
+.toolbar-actions .button {
+    flex: none;
+    width: auto;
+    padding: 0 14px;
+}

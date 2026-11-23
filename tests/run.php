@@ -15,6 +15,7 @@ use QuizMyClass\Support\QuizSettings;
 use QuizMyClass\Support\Grader;
 use QuizMyClass\Support\AttemptRepository;
 use QuizMyClass\Support\ResultsRepository;
+use QuizMyClass\Support\AdminRepository;
 use QuizMyClass\Auth\AccessPolicy;
 use QuizMyClass\Auth\GoogleClient;
 
@@ -31,6 +32,7 @@ require_once dirname(__DIR__) . '/app/Support/Grader.php';
 require_once dirname(__DIR__) . '/app/Support/QuizRepository.php';
 require_once dirname(__DIR__) . '/app/Support/AttemptRepository.php';
 require_once dirname(__DIR__) . '/app/Support/ResultsRepository.php';
+require_once dirname(__DIR__) . '/app/Support/AdminRepository.php';
 require_once dirname(__DIR__) . '/app/Auth/AccessPolicy.php';
 require_once dirname(__DIR__) . '/app/Auth/GoogleClient.php';
 
@@ -94,9 +96,9 @@ $tests['migrations are repeatable'] = static function () use ($config): void {
     $database = Database::connect($config);
     $migrator = new Migrator($database, $config['paths']['migrations']);
     $applied = $migrator->migrate();
-    assert($applied === ['001_foundation', '002_identity_rooms', '003_questions', '004_quiz_delivery']);
+    assert($applied === ['001_foundation', '002_identity_rooms', '003_questions', '004_quiz_delivery', '005_user_moderation']);
     assert($migrator->migrate() === []);
-    assert($migrator->appliedCount() === 4);
+    assert($migrator->appliedCount() === 5);
 };
 
 $tests['backups are consistent and private'] = static function () use ($config): void {
@@ -108,7 +110,7 @@ $tests['backups are consistent and private'] = static function () use ($config):
 
     $copy = new PDO('sqlite:' . $path);
     $count = (int) $copy->query('SELECT COUNT(*) FROM qmc_migrations')->fetchColumn();
-    assert($count === 4);
+    assert($count === 5);
 };
 
 $tests['google profile identity follows stable subject'] = static function () use ($config): void {
@@ -515,6 +517,52 @@ $tests['quiz rename is owner-only, editing-only, and keeps links unique'] = stat
     } catch (RuntimeException $exception) {
         assert(str_contains($exception->getMessage(), 'being edited'));
     }
+};
+
+$tests['admin can search, deactivate, block users, and delete with confirmation and audit'] = static function () use ($config): void {
+    $database = Database::connect($config);
+    $users = new UserRepository($database);
+    $owner = $users->syncGoogleProfile(['sub' => 'adm-owner', 'email' => 'adm-owner@school.example', 'name' => 'Admin Owner']);
+    $rooms = new RoomRepository($database);
+    $room = $rooms->create((int) $owner['id'], '100% Quiz_Name', 'admin-target');
+    $questions = new QuestionRepository($database);
+    $q = $questions->create((int) $room['id'], (int) $owner['id'], [
+        'type' => 'true_false', 'prompt_html' => '<p>x</p>', 'correct' => 'true', 'points' => '1',
+    ]);
+    $questions->moderate((int) $q['id'], (int) $owner['id'], 'approved');
+    $quiz = new QuizRepository($database);
+    $quiz->activate((int) $room['id'], (int) $owner['id']);
+    $room = $rooms->findById((int) $room['id']);
+    $revision = $quiz->latestRevision((int) $room['id']);
+    $attempt = (new AttemptRepository($database))->startOrResume($room, $revision, (int) $owner['id']);
+
+    $admin = new AdminRepository($database);
+    assert(count($admin->searchRooms('adm-owner@', '', 1)['rows']) === 1, 'search by owner email');
+    assert(count($admin->searchRooms('100%', '', 1)['rows']) === 1, 'LIKE wildcards are escaped, not interpreted');
+    assert($admin->searchRooms('%', '', 1)['rows'] !== [] && count($admin->searchRooms('zzz%', '', 1)['rows']) === 0);
+    assert($admin->roomDetail((int) $room['id'])['revisions'][0]['open_attempts'] == 1);
+
+    $admin->closeRoom((int) $room['id'], 'tester');
+    assert($rooms->findById((int) $room['id'])['state'] === 'closed');
+    assert((new AttemptRepository($database))->find((int) $attempt['id'])['status'] === 'submitted', 'open attempts are graded on admin close');
+
+    $admin->setBlocked((int) $owner['id'], true, 'tester');
+    assert(!empty($users->findById((int) $owner['id'])['blocked_at']));
+    $admin->setBlocked((int) $owner['id'], false, 'tester');
+    assert(empty($users->findById((int) $owner['id'])['blocked_at']));
+
+    try {
+        $admin->deleteRoom((int) $room['id'], 'wrong-slug', 'tester');
+        assert(false, 'delete needs the exact slug');
+    } catch (RuntimeException $exception) {
+        assert(str_contains($exception->getMessage(), 'exactly'));
+    }
+    $admin->deleteRoom((int) $room['id'], 'admin-target', 'tester');
+    assert($rooms->findById((int) $room['id']) === null);
+    $left = (int) $database->query('SELECT COUNT(*) FROM quiz_attempts WHERE room_id = ' . (int) $room['id'])->fetchColumn();
+    assert($left === 0, 'attempts cascade with the quiz');
+    $audit = (int) $database->query("SELECT COUNT(*) FROM audit_events WHERE action = 'admin.room_deleted' AND room_id IS NULL")->fetchColumn();
+    assert($audit === 1, 'deletion is audited without a room reference');
 };
 
 $tests['collaboration protects ownership answers and moderation'] = static function () use ($config): void {

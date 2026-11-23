@@ -88,7 +88,7 @@ final class UserRepository
     public function findById(int $id): ?array
     {
         $statement = $this->database->prepare(
-            'SELECT id, google_subject, email, display_name, created_at, updated_at, last_login_at ' .
+            'SELECT id, google_subject, email, display_name, created_at, updated_at, last_login_at, blocked_at ' .
             'FROM users WHERE id = :id'
         );
         $statement->execute(['id' => $id]);

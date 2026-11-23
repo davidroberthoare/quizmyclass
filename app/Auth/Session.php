@@ -79,7 +79,12 @@ final class Session
     public static function user(UserRepository $users): ?array
     {
         $userId = filter_var(self::get('user_id'), FILTER_VALIDATE_INT);
-        return $userId === false ? null : $users->findById($userId);
+        if ($userId === false || $userId === null) {
+            return null;
+        }
+        $user = $users->findById($userId);
+        // A user blocked by the super-admin loses access immediately, even mid-session.
+        return ($user === null || !empty($user['blocked_at'])) ? null : $user;
     }
 }
 

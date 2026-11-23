@@ -1,0 +1,15 @@
+# Super-admin console. Access is Apache Basic auth, NOT Google sign-in.
+#
+# Setup (see README "Super-admin"):
+#   1. php scripts/admin-password.php   -> prints a line for the password file
+#   2. Save it OUTSIDE the web root, e.g. /home/you/quizmyclass-secrets/.htpasswd
+#   3. Replace the AuthUserFile path below with that absolute path.
+#
+# Until the path is correct Apache returns a 500 error here, so the console stays closed.
+AuthType Basic
+AuthName "QuizMyClass administration"
+AuthUserFile "/REPLACE/WITH/ABSOLUTE/PATH/OUTSIDE/WEB/ROOT/.htpasswd"
+Require valid-user
+
+Options -Indexes
+DirectoryIndex index.php

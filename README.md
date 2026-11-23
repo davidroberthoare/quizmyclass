@@ -111,10 +111,35 @@ Question changes are audited and remain editable only while the room is in
 | Quiz settings, activation, immutable revisions, close/reopen | Done |
 | Taking a quiz: attempts, timer, resume, shuffling, grading, feedback | Done |
 | Teacher results: students, attempts, item analysis, CSV, print, reset | Done |
-| Super-admin console (`.htaccess`-protected) | Not started |
-| Backups UI, deployment guide, hardening pass | Not started |
+| Super-admin console (`.htaccess`-protected) | Done |
+| Deployment guide and final hardening pass | Not started |
 
 User-facing text says "quiz"; the database and code still use `rooms` internally.
+
+## Super-admin
+
+The console lives at `/admin/` and is protected by Apache Basic auth, not Google
+sign-in. It shows deployment status, searches every quiz and user, lets you
+inspect a quiz's settings, versions, questions and audit trail, deactivate or
+delete a quiz (deleting requires typing its link), and block or unblock users.
+Every action is written to the audit log. Student attempt contents are not shown
+there, only aggregate counts.
+
+Setup on Apache:
+
+1. Run `php scripts/admin-password.php` and choose a password of 12+ characters.
+2. Save the printed line in a `.htpasswd` file **outside** the web root.
+3. Put that file's absolute path in `AuthUserFile` in `public/admin/.htaccess`.
+
+Until step 3 is done Apache returns a 500 error for `/admin/`, so the console
+stays closed. The application also refuses requests that Apache has not
+authenticated. For local development with `php -S` (which ignores `.htaccess`),
+add `'admin' => ['dev_password_hash' => '...']` to `config/local.php` using the
+hash the script prints, then sign in as user `admin`. That fallback only works
+when `environment` is `development`.
+
+After updating the code, run `php scripts/migrate.php`. Until you do, every page
+answers with a clear "needs migration" message instead of a database error.
 
 ## Version 1 scope
 

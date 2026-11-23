@@ -22,6 +22,8 @@ require_once __DIR__ . '/Support/Grader.php';
 require_once __DIR__ . '/Support/QuizRepository.php';
 require_once __DIR__ . '/Support/AttemptRepository.php';
 require_once __DIR__ . '/Support/ResultsRepository.php';
+require_once __DIR__ . '/Support/AdminGuard.php';
+require_once __DIR__ . '/Support/AdminRepository.php';
 require_once __DIR__ . '/Auth/Session.php';
 require_once __DIR__ . '/Auth/AccessPolicy.php';
 require_once __DIR__ . '/Auth/GoogleClient.php';
@@ -32,9 +34,25 @@ $config = Config::load($root);
 date_default_timezone_set($config['app']['timezone']);
 ini_set('display_errors', $config['app']['debug'] ? '1' : '0');
 
+$database = Database::connect($config);
+
+// After a code update, a forgotten `php scripts/migrate.php` should give a clear message, not a fatal error.
+if (PHP_SAPI !== 'cli') {
+    $pending = (new \QuizMyClass\Support\Migrator($database, $config['paths']['migrations']))->pendingCount();
+    if ($pending > 0) {
+        http_response_code(503);
+        header('Content-Type: text/plain; charset=utf-8');
+        header('Retry-After: 300');
+        echo $config['app']['debug']
+            ? "The database needs $pending migration(s). Run: php scripts/migrate.php"
+            : 'QuizMyClass is being updated. Please try again in a few minutes.';
+        exit;
+    }
+}
+
 return [
     'root' => $root,
     'config' => $config,
-    'database' => Database::connect($config),
+    'database' => $database,
 ];
 

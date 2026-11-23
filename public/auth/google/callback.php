@@ -33,6 +33,9 @@ try {
     $profile = $google->authenticate($code, $verifier);
     (new AccessPolicy($runtime['config']))->assertAllowed($profile);
     $user = (new UserRepository($runtime['database']))->syncGoogleProfile($profile);
+    if (!empty($user['blocked_at'])) {
+        throw new RuntimeException('This account has been blocked. Contact your administrator.');
+    }
     Session::login((int) $user['id']);
     Session::set('flash_success', 'Signed in as ' . $user['display_name'] . '.');
     Http::redirect('/');

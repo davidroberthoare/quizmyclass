@@ -12,6 +12,11 @@ if ($path !== '/' && is_file($file)) {
     return false;
 }
 
+if ($path === '/admin' || $path === '/admin/') {
+    require __DIR__ . '/admin/index.php';
+    return true;
+}
+
 if ($path === '/health') {
     require __DIR__ . '/health.php';
     return true;

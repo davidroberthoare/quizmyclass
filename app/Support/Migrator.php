@@ -102,5 +102,11 @@ final class Migrator
 
         return (int) $this->database->query('SELECT COUNT(*) FROM qmc_migrations')->fetchColumn();
     }
-}
 
+    /** Number of migration files that have not been applied yet. */
+    public function pendingCount(): int
+    {
+        $files = glob($this->migrationDirectory . '/*.sql') ?: [];
+        return max(0, count($files) - $this->appliedCount());
+    }
+}
